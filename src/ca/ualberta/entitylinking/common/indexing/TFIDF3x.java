@@ -22,15 +22,21 @@ import java.util.Map;
 import java.util.HashMap;
 
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.TermFreqVector;
+import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.SlowCompositeReaderWrapper;
+//import org.apache.lucene.index.CompositeReader;
+import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.analysis.gosen.GosenAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.search.DefaultSimilarity;
+import org.apache.lucene.search.similarities.DefaultSimilarity;
 import org.apache.lucene.search.FieldCache;
+import org.apache.lucene.search.FieldCache.DocTermsIndex;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.util.Version;
 
@@ -38,7 +44,7 @@ import ca.ualberta.entitylinking.config.WNEDConfig;
 import ca.ualberta.entitylinking.utils.StringUtils;
 
 public class TFIDF3x {
-	private IndexReader reader = null;
+	private AtomicReader reader = null;
 	private Map<String, Integer> name2id = null;
 	
 	public TFIDF3x() {
@@ -67,14 +73,18 @@ public class TFIDF3x {
 	
 	public void loadIndex(String indexDir) {
 		try {
-			reader = IndexReader.open(FSDirectory.open(new File(indexDir)));
-			
-			String[] stringArray = FieldCache.DEFAULT.getStrings(reader, "name");
-			
+			reader = SlowCompositeReaderWrapper.wrap(IndexReader.open(FSDirectory.open(new File(indexDir))));
+
+			DocTermsIndex dti = FieldCache.DEFAULT.getTermsIndex(reader, "name");
+      TermsEnum termsEnum = dti.getTermsEnum();
+
 			// build a map from string to its document id.
 			name2id = new HashMap<String, Integer>();
-			for (int i = 0; i < stringArray.length; i++)
-				name2id.put(stringArray[i], i);
+      int i = 0;
+      while (termsEnum.next() != null) {
+          name2id.put(termsEnum.term().utf8ToString() ,i);
+          i++;
+      }
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -85,7 +95,7 @@ public class TFIDF3x {
 	}
 	
 	/**
-	 * Filter the string with StandardAnalyzer.
+	 * Filter the string with GosenAnalyzer.
 	 * @param str
 	 * @param removeStopWords	Indicate if the stop words should be removed.
 	 * @return
@@ -96,9 +106,9 @@ public class TFIDF3x {
 		try {
 			Analyzer analyzer = null;
 			if (removeStopWords)
-				analyzer = new StandardAnalyzer(Version.LUCENE_34);
+				analyzer = new GosenAnalyzer(Version.LUCENE_40);
 			else
-				analyzer = new TextAnalyzerWithStopwords(Version.LUCENE_34);
+				analyzer = new TextAnalyzerWithStopwords(Version.LUCENE_40);
 			
 			TokenStream tokenStream = analyzer.tokenStream("string",
 					new StringReader(str));
@@ -130,16 +140,16 @@ public class TFIDF3x {
 		try {
 			int docId = name2id.get(docName);
 
-			TermFreqVector terms = reader.getTermFreqVector(docId, "contents");
+			Terms terms = reader.getTermVector(docId, "contents");
 
 			// TF - term frequency.
 			term = processString(term, false);
-			int tf = 0;
-			int idx = terms.indexOf(term);
-			if (idx >= 0) {
-				int[] freq = terms.getTermFrequencies();
-				tf = freq[idx];
-			}
+      TermsEnum reuse = null;
+      TermsEnum termsEnum = terms.iterator(reuse);
+      int tf = 0;
+      if(termsEnum.seekCeil((new Term("contents", term)).bytes()) == TermsEnum.SeekStatus.FOUND) {
+          tf = (int)termsEnum.totalTermFreq();
+      }
 
 			// IDF
 			// 1. docFreq
@@ -203,23 +213,23 @@ public class TFIDF3x {
 
 		try {
 			int docId = name2id.get(docName);
-			
-			TermFreqVector termVector = reader.getTermFreqVector(docId, "contents");
+
+			Terms terms = reader.getTermVector(docId, "contents");
 			int numDocs = reader.numDocs();
 
-			int[] termFreq = termVector.getTermFrequencies();
-			String[] terms = termVector.getTerms();
-			for (int i = 0; i < terms.length; i++) {
-				//avoid stop words
-				if (StringUtils.isStopWord(terms[i]))
-					continue;
-				
-				int tf = termFreq[i];
-				int df = reader.docFreq(new Term("contents", terms[i]));
-				float tfidf = simObj.tf(tf) * simObj.idf(df, numDocs);
-				map.put(terms[i], tfidf);
-			}
-			
+                        TermsEnum reuse = null;
+                        TermsEnum termsEnum = terms.iterator(reuse);
+
+                        while (termsEnum.next() != null) {
+                            //avoid stop words
+                            if (StringUtils.isStopWord(termsEnum.term().utf8ToString()))
+                               continue;
+
+                            int tf = (int)termsEnum.totalTermFreq();
+                            int df = reader.docFreq(new Term("contents", termsEnum.term().utf8ToString()));
+                            float tfidf = simObj.tf(tf) * simObj.idf(df, numDocs);
+                            map.put(termsEnum.term().utf8ToString(), tfidf);
+                        }
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -239,15 +249,14 @@ public class TFIDF3x {
 	 */
 	public Map<String, Float> TextTFIDFVector(String text, Map<String, Float> docVector) {
 		Map<String, Float> map = new HashMap<String, Float>();
-		
-		//preprocess the text using StandardAnalyzer (StandardAnalyzer2 + StopAnalyzer).
-		StandardAnalyzer analyzer = new StandardAnalyzer(Version.LUCENE_34);
-		TokenStream tokenStream = analyzer.tokenStream("string",
-				new StringReader(text));
-		CharTermAttribute charTermAttribute = tokenStream
-				.addAttribute(CharTermAttribute.class);
+                Analyzer analyzer = new GosenAnalyzer(Version.LUCENE_40);
 
 		try {
+                        //preprocess the text using GosenAnalyzer (GosenAnalyzer2 + StopAnalyzer).
+                        TokenStream tokenStream = analyzer.tokenStream("string",
+                                    new StringReader(text));
+                        CharTermAttribute charTermAttribute = tokenStream
+                                    .addAttribute(CharTermAttribute.class);
 			tokenStream.reset();
 			while (tokenStream.incrementToken()) {
 				String term = charTermAttribute.toString();

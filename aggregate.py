@@ -37,5 +37,4 @@ def removeSelfLink(graphFile):
 
 if __name__ == "__main__":
     aggregateSortedFile(sys.argv[1])
-#    removeSelfLink(sys.argv[1])
-
+    removeSelfLink(sys.argv[1])

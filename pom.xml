@@ -136,17 +136,22 @@
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-core</artifactId>
-            <version>3.4.0</version>
+            <version>4.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-spellchecker</artifactId>
-            <version>3.4.0</version>
+            <artifactId>lucene-queryparser</artifactId>
+            <version>4.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-analyzers</artifactId>
-            <version>3.4.0</version>
+            <artifactId>lucene-analyzers-common</artifactId>
+            <version>4.0.0</version>
+        </dependency>
+        <dependency> 
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-suggest</artifactId>
+            <version>4.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.ant</groupId>
@@ -250,6 +255,13 @@
             <version>8.1</version>
             <scope>system</scope>
             <systemPath>${basedir}/lib/gate.jar</systemPath>
+        </dependency>
+        <dependency>
+          <groupId>com.github.lucene-gosen</groupId>
+          <artifactId>lucene-gosen</artifactId>
+          <version>4.0.0</version>
+          <scope>system</scope>
+          <systemPath>${basedir}/lib/lucene-gosen-4.0.0-ipadic.jar</systemPath>
         </dependency>
     </dependencies>
 </project>

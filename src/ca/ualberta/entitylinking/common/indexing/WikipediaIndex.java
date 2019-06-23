@@ -20,14 +20,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.analysis.gosen.GosenAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
-import org.apache.lucene.queryParser.QueryParser;
+import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TopDocs;
@@ -35,6 +36,8 @@ import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.store.IOContext.Context;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.Version;
 
 import ca.ualberta.entitylinking.kb.wikipedia.wikixmlj.PageCallbackHandler;
@@ -94,7 +97,7 @@ public class WikipediaIndex implements PageCallbackHandler {
 			Directory dir = FSDirectory.open(new File(indexDir));
 			IndexWriterConfig iwc = new IndexWriterConfig(
 					Version.LUCENE_34, 
-					new StandardAnalyzer(Version.LUCENE_34));
+					new GosenAnalyzer(Version.LUCENE_34));
 
 			// create a new index
 			if (create)
@@ -127,7 +130,6 @@ public class WikipediaIndex implements PageCallbackHandler {
 	
 	public void finalize() {
 		try {
-			writer.optimize();
 			writer.close();
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -138,8 +140,8 @@ public class WikipediaIndex implements PageCallbackHandler {
 		Directory dir = null;
 		
 		try {
-			dir = new RAMDirectory(new MMapDirectory(new File(diskDir)));
-			if (!IndexReader.indexExists(dir))
+                        dir = new RAMDirectory(new MMapDirectory(new File(diskDir)), new IOContext(Context.READ));
+			if (!DirectoryReader.indexExists(dir))
 				return;
 			
 			reader = IndexReader.open(dir);
@@ -160,7 +162,7 @@ public class WikipediaIndex implements PageCallbackHandler {
 			queryStr = queryStr.toLowerCase();
 
 			//Just do a quick search
-			QueryParser parser = new QueryParser(Version.LUCENE_34, "content", new StandardAnalyzer(Version.LUCENE_34));
+			QueryParser parser = new QueryParser(Version.LUCENE_34, "content", new GosenAnalyzer(Version.LUCENE_34));
 			Query query = parser.parse(queryStr);
 			n = n > 5 ? 5: n;
 			TopDocs td = searcher.search(query, n);
