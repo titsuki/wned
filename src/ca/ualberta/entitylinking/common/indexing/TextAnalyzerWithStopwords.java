@@ -17,7 +17,7 @@ package ca.ualberta.entitylinking.common.indexing;
 
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.LowerCaseFilter;
+import org.apache.lucene.analysis.core.LowerCaseFilter;
 import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.lucene.analysis.standard.StandardFilter;
 import org.apache.lucene.util.Version;
@@ -58,9 +58,11 @@ public class TextAnalyzerWithStopwords extends Analyzer {
 	    return maxTokenLength;
 	  }
 
-	  public TokenStream tokenStream(String fieldName, Reader reader) {
+          @Override
+          protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
 	    final StandardTokenizer src = new StandardTokenizer(matchVersion, reader);
 	    TokenStream tok = new StandardFilter(matchVersion, src);
-	    return new LowerCaseFilter(matchVersion, tok);
+	    TokenStream filter = new LowerCaseFilter(matchVersion, tok);
+            return new TokenStreamComponents(src, filter);
 	  }
 }

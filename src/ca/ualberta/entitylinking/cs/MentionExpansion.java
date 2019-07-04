@@ -28,8 +28,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import ca.ualberta.entitylinking.config.WNEDConfig;
-import org.apache.lucene.analysis.CharArraySet;
-import org.apache.lucene.analysis.StopAnalyzer;
+import org.apache.lucene.analysis.util.CharArraySet;
+import org.apache.lucene.analysis.core.StopAnalyzer;
 
 import ca.ualberta.entitylinking.common.data.Document;
 import ca.ualberta.entitylinking.common.data.Entity;

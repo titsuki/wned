@@ -17,8 +17,8 @@ package ca.ualberta.entitylinking.utils;
 
 import java.util.Arrays;
 
-import org.apache.lucene.analysis.CharArraySet;
-import org.apache.lucene.analysis.StopAnalyzer;
+import org.apache.lucene.analysis.util.CharArraySet;
+import org.apache.lucene.analysis.core.StopAnalyzer;
 
 public class StringUtils {
 	/**

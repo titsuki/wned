@@ -47,7 +47,7 @@ public class DocumentUtils {
         doc.setOriginalText(content);
 
         //2. Text annotation.
-        List<Sentence> sentences = myNer.annotateText(content);
+        List<Sentence> sentences = myNer.annotateFromOther(content);
         for (Sentence sentence : sentences)
             doc.addSentence(sentence);
 

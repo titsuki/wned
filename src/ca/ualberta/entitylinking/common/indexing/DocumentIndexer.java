@@ -34,16 +34,22 @@ import org.wikipedia.miner.util.PageIterator;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.TermFreqVector;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.SlowCompositeReaderWrapper;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.Version;
-import org.apache.lucene.search.DefaultSimilarity;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.search.similarities.DefaultSimilarity;
 import org.apache.lucene.search.FieldCache;
+import org.apache.lucene.search.FieldCache.DocTerms;
 
 public class DocumentIndexer {
 	public static String wikiConfigFile = WNEDConfig.wikiConfigFile;
@@ -221,7 +227,7 @@ public class DocumentIndexer {
 	public void initWriter(String indexDir, boolean create) {
 		try {
 			Directory dir = FSDirectory.open(new File(indexDir));
-			IndexWriterConfig iwc = new IndexWriterConfig(Version.LUCENE_34, null);
+			IndexWriterConfig iwc = new IndexWriterConfig(Version.LUCENE_40, null);
 
 			// create a new index
 			if (create)
@@ -262,7 +268,6 @@ public class DocumentIndexer {
 
 	public void finalize() {
 		try {
-			writer.optimize();
 			writer.close();
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -270,19 +275,19 @@ public class DocumentIndexer {
 	}
 
 	public void readLuceneIndex(String indexDir, String docName) {
-		IndexReader reader = null;
+		AtomicReader reader = null;
 		Map<String, Integer> name2id = null;
 
 		//load index
 		try {
-			reader = IndexReader.open(FSDirectory.open(new File(indexDir)));
+			reader = SlowCompositeReaderWrapper.wrap(IndexReader.open(FSDirectory.open(new File(indexDir))));
 
-			String[] stringArray = FieldCache.DEFAULT.getStrings(reader, "name");
-
-			// build a map from string to its document id.
+			DocTerms docTerms = FieldCache.DEFAULT.getTerms(reader, "name");
 			name2id = new HashMap<String, Integer>();
-			for (int i = 0; i < stringArray.length; i++)
-				name2id.put(stringArray[i], i);
+      BytesRef term = new BytesRef();
+      for (int i = 0; i < docTerms.size(); i++) {
+          name2id.put(docTerms.getTerm(i, term).utf8ToString(), i);
+      }
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -297,22 +302,17 @@ public class DocumentIndexer {
 			int docId = name2id.get(docName);
 			Document doc = reader.document(docId);
 
-			TermFreqVector termVector = reader.getTermFreqVector(docId, "contents");
+			Terms terms = reader.getTermVector(docId, "contents");
 			int numDocs = reader.numDocs();
+      TermsEnum reuse = null;
+      TermsEnum termsEnum = terms.iterator(reuse);
 
-			int[] termFreq = termVector.getTermFrequencies();
-			String[] terms = termVector.getTerms();
-			for (int i = 0; i < terms.length; i++) {
-				//avoid stop words
-//				if (isStopWord(terms[i]))
-//					continue;
-
-				int tf = termFreq[i];
-				int df = reader.docFreq(new Term("contents", terms[i]));
-				float tfidf = simObj.tf(tf) * simObj.idf(df, numDocs);
-				System.out.println(terms[i] + ": " + tfidf);
-			}
-
+      while (termsEnum.next() != null) {
+          int tf = (int)termsEnum.totalTermFreq();
+          int df = reader.docFreq(new Term("contents", termsEnum.term().utf8ToString()));
+          float tfidf = simObj.tf(tf) * simObj.idf(df, numDocs);
+          System.out.println(termsEnum.term().utf8ToString() + ": " + tfidf);
+      }
 		} catch (Exception e) {
 			e.printStackTrace();
 		}

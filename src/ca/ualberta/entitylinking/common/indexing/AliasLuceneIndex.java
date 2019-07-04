@@ -18,6 +18,7 @@ package ca.ualberta.entitylinking.common.indexing;
 import java.io.File;
 import java.io.BufferedReader;
 import java.io.FileReader;
+import java.io.StringReader;
 import java.io.Reader;
 import java.util.Collections;
 import java.util.HashSet;
@@ -27,38 +28,51 @@ import java.util.List;
 import java.util.ArrayList;
 
 import org.apache.lucene.analysis.ngram.NGramTokenizer;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.util.Version;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Fieldable;
+import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.document.NumericField;
-import org.apache.lucene.queryParser.QueryParser;
+import org.apache.lucene.document.IntField;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.FieldType.NumericType;
+import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.store.MMapDirectory;
+import org.apache.lucene.store.IOContext.Context;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.TermFreqVector;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.index.SlowCompositeReaderWrapper;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.index.TermsEnum.SeekStatus;
 import org.apache.lucene.search.FieldCache;
+import org.apache.lucene.search.FieldCache.DocTerms;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.QueryTermVector;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.spell.NGramDistance;
-
+import org.apache.lucene.analysis.core.LowerCaseFilter;
 import ca.ualberta.entitylinking.utils.Rank;
 import ca.ualberta.entitylinking.utils.similarity.StringSim;
 
 public class AliasLuceneIndex {
 	private static final int NGRAM = 2;
-	private IndexReader reader = null;
+	private AtomicReader reader = null;
 	private IndexWriter writer = null;
 	private IndexSearcher searcher = null;
 	private Analyzer analyzer = null;
-	private String[] keyArray = null;
+	private DocTerms keyArray = null;
 	private int[] sizeArray = null;
 	private Map<String, Integer> docIDMap = new HashMap<String, Integer>();
 	
@@ -68,10 +82,12 @@ public class AliasLuceneIndex {
 		public NGramAnalyzer(int ngram) {
 			this.ngram = ngram;
 		}
-		
-		public TokenStream tokenStream(String fieldName, Reader reader) {
-			return new NGramTokenizer(reader, 2, ngram);
-		}
+                @Override
+                protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
+                        Tokenizer source = new NGramTokenizer(reader, 2, ngram);
+                        TokenStream filter = new LowerCaseFilter(Version.LUCENE_40, source);
+                        return new TokenStreamComponents(source, filter);
+                }
 	}
 
 	public AliasLuceneIndex() {
@@ -85,7 +101,7 @@ public class AliasLuceneIndex {
 	
 	public void initWriter(String dirLoc) {
 		Directory dir = null;
-		IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_34, analyzer); 
+		IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_40, analyzer); 
 		
 		try {
 			dir = new MMapDirectory(new File(dirLoc));
@@ -99,16 +115,20 @@ public class AliasLuceneIndex {
 		try {
 			Document doc = new Document();
 			
-			Fieldable field = null;
+			Field field = null;
 
 			field = new Field("docID", alias.toLowerCase(), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS);
 			doc.add(field);
 			field = new Field("alias", alias.toLowerCase(), Field.Store.YES, 
 					Field.Index.ANALYZED, Field.TermVector.YES);
 			doc.add(field);
-			QueryTermVector vector = new QueryTermVector(alias.toLowerCase(), analyzer);
-			NumericField nField = new NumericField("size");
-			nField.setIntValue(vector.size());
+                        TokenStream ts = analyzer.tokenStream("alias", new StringReader(alias.toLowerCase()));
+                        int tokenSize = 0;
+                        while (ts.incrementToken()) {
+                          tokenSize++;
+                        }
+			IntField nField = new IntField("size", tokenSize, Field.Store.YES);
+                        ts.close();
 			doc.add(nField);
 
 			for (String entity : entities) {
@@ -124,7 +144,6 @@ public class AliasLuceneIndex {
 	
 	public void closeWriter() {
 		try {
-			writer.optimize();
 			writer.close();
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -136,8 +155,8 @@ public class AliasLuceneIndex {
 		Directory dir = null;
 
 		try {
-			dir = new RAMDirectory(new MMapDirectory(new File(diskDir)));
-			if (!IndexReader.indexExists(dir))
+			dir = new RAMDirectory(new MMapDirectory(new File(diskDir)), new IOContext(Context.READ));
+			if (!DirectoryReader.indexExists(dir))
 				return false;
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -151,17 +170,17 @@ public class AliasLuceneIndex {
 		Directory dir = null;
 
 		try {
-			dir = new RAMDirectory(new MMapDirectory(new File(diskDir)));
-			if (!IndexReader.indexExists(dir))
+			dir = new RAMDirectory(new MMapDirectory(new File(diskDir)), new IOContext(Context.READ));
+			if (!DirectoryReader.indexExists(dir))
 				return false;
-			
-			reader = IndexReader.open(dir);
-			String[] keyArray = FieldCache.DEFAULT.getStrings(reader, "docID");
+			reader = SlowCompositeReaderWrapper.wrap(IndexReader.open(dir));
+                        DocTerms docTerms = FieldCache.DEFAULT.getTerms(reader, "docID");
 		//	int[] sizeArray= FieldCache.DEFAULT.getInts(reader, "size");
 			searcher = new IndexSearcher(reader);
-
-			for (int i = 0; i < keyArray.length; i++)
-				docIDMap.put(keyArray[i], i);
+                        BytesRef term = new BytesRef();
+                        for (int i = 0; i < docTerms.size(); i++) {
+                                docIDMap.put(docTerms.getTerm(i, term).utf8ToString(), i);
+                        }
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -234,8 +253,8 @@ public class AliasLuceneIndex {
 			// using an exact match against the keyArray[].
 			int docId = docIDMap.get(queryStr);
 			Document doc = reader.document(docId);
-			Fieldable[] fields = doc.getFieldables("content");
-			for (Fieldable field : fields) 
+			IndexableField[] fields = doc.getFields("content");
+			for (IndexableField field : fields) 
 				ret.add(field.stringValue());
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -248,12 +267,13 @@ public class AliasLuceneIndex {
 		Map<String, List<String>> ret = new HashMap<String, List<String>>();
 		
 		try {
-			if (keyArray == null)
-				keyArray = FieldCache.DEFAULT.getStrings(reader, "docID");
+                        DocTerms docTerms = null;
+			if (docTerms == null)
+                                docTerms = FieldCache.DEFAULT.getTerms(reader, "docID");
 
 			queryStr = queryStr.toLowerCase();
 			//Just do a quick search
-			QueryParser parser = new QueryParser(Version.LUCENE_34, "alias", analyzer);
+			QueryParser parser = new QueryParser(Version.LUCENE_40, "alias", analyzer);
 			Query query = parser.parse(queryStr);
 			TopDocs td = searcher.search(query, 200);
 			
@@ -284,13 +304,14 @@ public class AliasLuceneIndex {
 			for (Integer docID : rankList) {
 				int docId = docID.intValue();
 				Document doc = reader.document(docId);
-				Fieldable[] fields = doc.getFieldables("content");
+				IndexableField[] fields = doc.getFields("content");
 
 				List<String> list = new ArrayList<String>();
-				for (Fieldable field : fields)
+				for (IndexableField field : fields)
 					list.add(field.stringValue());
 				
-				ret.put(keyArray[docId], list);
+                                BytesRef term = new BytesRef();
+				ret.put(docTerms.getTerm(docId, term).utf8ToString(), list);
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -300,33 +321,54 @@ public class AliasLuceneIndex {
 	}
 
 	private List<Integer> rankingByDiceCoefficient(TopDocs td, String str) {
-		QueryTermVector vector = new QueryTermVector(str, analyzer);
-		String[] terms = vector.getTerms();
-		int[] freqs1 = vector.getTermFrequencies();
-
-		Map<Integer, Double> map = new HashMap<Integer, Double>();
-
-		try {
-			if (sizeArray == null)
-				sizeArray = FieldCache.DEFAULT.getInts(reader, "size");
+                TokenStream ts = null;
+                try {
+                  ts = analyzer.tokenStream(null, new StringReader(str));
 		} catch (Exception e) {e.printStackTrace();}
 
-		for (int i = 0; i < terms.length; i ++) {
+                CharTermAttribute charTermAttribute = ts.addAttribute(CharTermAttribute.class);
+                Map<String, Integer> termFreqVec = new HashMap<String, Integer>();
+                try {
+                  while (ts.incrementToken()) {
+                     String term = charTermAttribute.toString();
+                     if(termFreqVec.containsKey(term)){
+                        int count = termFreqVec.get(term);
+                        termFreqVec.put(term, ++count);
+                     }
+                     else{
+                        termFreqVec.put(term, 1);
+                     }
+                  }
+		} catch (Exception e) {e.printStackTrace();}
+
+		Map<Integer, Double> map = new HashMap<Integer, Double>();
+		try {
+			if (sizeArray == null)
+				sizeArray = FieldCache.DEFAULT.getInts(reader, "size", true);
+		} catch (Exception e) {e.printStackTrace();}
+
+                for ( String term: termFreqVec.keySet() ) {
 			for (int j = 0; j < td.scoreDocs.length; j++) {
 				int docId = td.scoreDocs[j].doc;
-				TermFreqVector v = null;
+				Terms v = null;
 				try {
-					v = reader.getTermFreqVector(docId, "alias");
+					v = reader.getTermVector(docId, "alias");
 				} catch (Exception e) {e.printStackTrace();}
-				
-				int[] freqs2 = v.getTermFrequencies();
-				int idx = v.indexOf(terms[i]);
-				if (idx < 0)
-					continue;
-			
-				int freq = freqs2[v.indexOf(terms[i])];
-			
-				double gramScore = (double) 2 * Math.min(freqs1[i], freq) / (terms.length + sizeArray[docId]);
+
+                                TermsEnum reuse = null;
+                                TermsEnum termsEnum = null;
+				try {
+                                  termsEnum = v.iterator(reuse);
+                                  if (termsEnum.seekCeil((new Term("alias", term)).bytes()) != SeekStatus.FOUND) {
+                                     continue;
+                                  }
+				} catch (Exception e) {e.printStackTrace();}
+				int freq = 0;
+				try {
+                                   freq = (int)termsEnum.totalTermFreq();
+				} catch (Exception e) {e.printStackTrace();}
+
+				double gramScore = (double) 2 * Math.min(termFreqVec.get(term), freq) / (termFreqVec.size() + sizeArray[docId]);
 				if (map.containsKey(docId))
 					gramScore += map.get(docId);
 			
@@ -358,12 +400,12 @@ public class AliasLuceneIndex {
 		
 		try {
 			if (keyArray == null)
-				keyArray = FieldCache.DEFAULT.getStrings(reader, "docID");
+				keyArray = FieldCache.DEFAULT.getTerms(reader, "docID");
 		} catch (Exception e) {e.printStackTrace();}
 
 		for (int i = 0; i < td.scoreDocs.length; i++) {
 			int docId = td.scoreDocs[i].doc;
-			String alias = keyArray[docId];
+			String alias = keyArray.getTerm(docId, null).utf8ToString();
 			double sim = measure.getDistance(alias, str);
 			rankList.add(new Rank<Double, Integer>(sim, docId));
 		}
@@ -383,12 +425,12 @@ public class AliasLuceneIndex {
 
 		try {
 			if (keyArray == null)
-				keyArray = FieldCache.DEFAULT.getStrings(reader, "docID");
+				keyArray = FieldCache.DEFAULT.getTerms(reader, "docID");
 		} catch (Exception e) {e.printStackTrace();}
 
 		for (int i = 0; i < td.scoreDocs.length; i++) {
 			int docId = td.scoreDocs[i].doc;
-			String alias = keyArray[docId];
+			String alias = keyArray.getTerm(docId, null).utf8ToString();
 			double sim = StringSim.jaro_winkler_score(alias, str);
 			rankList.add(new Rank<Double, Integer>(sim, docId));
 		}

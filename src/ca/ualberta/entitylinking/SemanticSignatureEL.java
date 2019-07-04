@@ -39,6 +39,8 @@ import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 
 import ca.ualberta.entitylinking.common.data.SurfaceForm;
+import ca.ualberta.entitylinking.common.data.Sentence;
+import ca.ualberta.entitylinking.common.data.Mention;
 import ca.ualberta.entitylinking.graph.similarity.context.EntityContextCache;
 import ca.ualberta.entitylinking.graph.similarity.context.MentionContextCache;
 import ca.ualberta.entitylinking.graph.similarity.measure.SimilarityMeasure;
@@ -1141,15 +1143,53 @@ public class SemanticSignatureEL {
 
         return results;
     }
+
+    public void linkingFromContent(String content) {
+        long begin = 0, end = 0;
+        begin = System.currentTimeMillis();
+        Document doc = DocumentUtils.annotateDocument(content, ner, orthoMatcher);
+        end = System.currentTimeMillis();
+        LOGGER.info("[profiling]annotateDocument: " + (end - begin) + " ms");
+
+        begin = System.currentTimeMillis();
+        Map<Integer, Mention> idxMenMap = DocumentUtils.getIndex(doc);
+        end = System.currentTimeMillis();
+        LOGGER.info("[profiling]DocumentUtils.getIndex: " + (end - begin) + " ms");
+
+        List<Mention> mentions = new ArrayList<Mention>();
+        for (Sentence sentence: doc.getSentences()) {
+            for (Mention m: sentence.getMentions()) {
+                mentions.add(m);
+            }
+        }
+
+        for (Mention m : mentions)
+            LOGGER.info(m.getName() + "[" + m.getEntity().getType() + "]" + ":" + m.getEntity().getName());
+
+        ELUtils.resolve(mentions);
+
+        begin = System.currentTimeMillis();
+        List<String> results = linkingImplUnified(mentions);
+        end = System.currentTimeMillis();
+        LOGGER.info("[profiling]linkingImplUnified: " + (end - begin) + " ms");
+
+        for (int j = 0; j < mentions.size(); j++) {
+            if (results != null &&
+                !results.isEmpty() &&
+                results.get(j) != null)
+                System.out.println(results.get(j));
+            else
+                System.out.print("NIL");
+        }
+		}
+
 	/**
 	 * @param args
 	 */
 	public static void main(String[] args) {
 		SemanticSignatureEL obj = new SemanticSignatureEL(args[0]);
-
-		String outFile = obj.linking(WNEDConfig.targetFile);
-
+                obj.linkingFromContent(args[1]);
 		// report the accuracy of the entity linking.
-		Evaluation.accuracy(outFile);
+		// Evaluation.accuracy(outFile);
 	}
 }
