@@ -95,6 +95,96 @@ public class StanfordNER {
 		return document;
 	}
 
+    public List<Sentence> annotateFromOther(String text) {
+        if (!(orlandoModel.isEmpty())) {
+            try {
+                @SuppressWarnings("rawtypes")
+                    AbstractSequenceClassifier orlandoClassifier = CRFClassifier.getClassifierNoExceptions(orlandoModel);
+                text = orlandoClassifier.classifyWithInlineXML(text);
+            } catch (Exception e) {
+                System.err.println("[WARNING] Stanford NER was unable to classify the following: ");
+                System.out.println("\t" + text + "\n");
+                e.printStackTrace();
+            }
+        }
+
+        List<Sentence> mySentences = new ArrayList<Sentence>();
+
+        // text
+        // TokA TokB TokC|||TypeA TypeB TypeC
+        String[] parts = text.split("\\|\\|\\|");
+        String[] rawTokens = parts[0].split(" ");
+        String[] rawTypes = parts[1].split(" ");
+
+        List<Token> tokens = new ArrayList<Token>();
+        List<Mention> mentions = new ArrayList<Mention>();
+        int position=0;
+        int offset=0;
+        String name = "";
+        String lastNe = "O";
+        int startEntity = 0;
+
+        for(String rawToken: rawTokens) {
+            // this is the text of the token
+            String word = rawToken;
+            // this is the NER label of the token
+            String ne = rawTypes[position];
+            // this is the token offset
+            int bPos = offset;
+            int ePos = offset + rawToken.length();
+
+            Token mytoken = new Token(word, position, bPos, ePos-1);
+            mytoken.addAnnotation(Token.ENTITY_ANNOTATION, rawTypes[position]);
+            tokens.add(mytoken);
+
+            // keep track of mentions
+                if(lastNe.equals("O")){
+                    if(!ne.equals("O")){
+                        startEntity = position;
+                        name = word;
+                    }
+                }else{
+                    if(ne.equals("O")){
+                        int endEntity = position-1;
+                        createMention(name, lastNe, startEntity, endEntity, mentions);
+                    }else{
+                        if(ne.equals(lastNe)){
+                            name += " " + word;
+                        }
+                    }
+
+                    if(!ne.equals(lastNe) && !ne.equals("O")){
+                        int endEntity = position-1;
+                        createMention(name, lastNe, startEntity, endEntity, mentions);
+
+                        startEntity=position;
+                        name = word;
+                    }
+
+                }
+
+                //				System.out.println(word + "\t" + lemma + "\t" + pos + "\t" + ne);
+                lastNe = ne;
+                position++;
+                offset += rawToken.length();
+            }
+
+            // verify mention ending at the last token
+            if(!lastNe.equals("O") && !lastNe.equals(".")){
+                int endEntity = position-1;
+                createMention(name, lastNe, startEntity, endEntity, mentions);
+            }
+
+            Sentence mySentence  = new Sentence(tokens);
+            for(Mention mention : mentions){
+                mySentence.addMention(mention);
+
+            }
+            mySentences.add(mySentence);
+            
+            return mySentences;
+    }
+
 	public List<Sentence> annotateText(String text){
 
 		if (!(orlandoModel.isEmpty())) {
@@ -155,8 +245,8 @@ public class StanfordNER {
 				int ePos = token.endPosition();
 
 				Token mytoken = new Token(word, position, bPos, ePos-1);
-				mytoken.addAnnotation(Token.LEMMA_ANNOTATION, lemma);
-				mytoken.addAnnotation(Token.POS_ANNOTATION, pos);
+				//mytoken.addAnnotation(Token.LEMMA_ANNOTATION, lemma);
+				//mytoken.addAnnotation(Token.POS_ANNOTATION, pos);
 				mytoken.addAnnotation(Token.ENTITY_ANNOTATION, ne);
 				tokens.add(mytoken);
 
